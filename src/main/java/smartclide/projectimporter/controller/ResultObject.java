@@ -4,6 +4,10 @@ public class ResultObject {
 	int status;
 	String message;
 
+	public ResultObject() {
+		
+	}
+	
 	public ResultObject(int status, String message) {
 		super();
 		this.status = status;

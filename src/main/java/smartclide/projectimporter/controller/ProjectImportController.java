@@ -10,15 +10,23 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.RemoteSetUrlCommand.UriType;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
+import org.eclipse.jgit.api.errors.NoFilepatternException;
 import org.eclipse.jgit.api.errors.TransportException;
+import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,8 +44,9 @@ import reactor.core.publisher.Mono;
 @RestController
 @RequestMapping("/importProject")
 public class ProjectImportController {
+	Logger log = LoggerFactory.getLogger(ProjectImportController.class);
 	
-	@Value("$(smartclide.api.url)")
+	@Value("${smartclide.api.url}")
 	String SMARTCLIDE_API_URL;
 	
 	String CICD_FILE_SERVICE_PATH = "/builds/ci-cd-file/";
@@ -58,40 +67,84 @@ public class ProjectImportController {
 		try {
 			Mono<ResultObject> newRemoteRequest = createRemoteRepo(gitLabServerURL, gitlabToken, projectName);//non-blocking
 			Git repo = cloneServiceRepo(originalRepoUrl).get();//blocking
+			log.info("Remote repository cloned at {}", repo.getRepository().getWorkTree().getAbsolutePath());
 			
-			File gitlabciFile = getCIFile(projectName, repo.getRepository().getDirectory());//blocking
-			repo.add().addFilepattern(gitlabciFile.getPath()).call();
-			repo.commit().setMessage("Chore: Add generated gitlab CI file").call();
+			File gitlabciFile = getCIFile(projectName, repo.getRepository().getWorkTree());//blocking
+			addAndCommitFile(repo,gitlabciFile.getName());
 			
 			String newRemoteUrl = newRemoteRequest.block().getMessage();//blocking
-			repo.remoteSetUrl().setRemoteUri(new URIish(newRemoteUrl));
-			repo.push().setCredentialsProvider(new UsernamePasswordCredentialsProvider(gitlabToken, "" )).call();
+			setNewRemoteAndPush(repo, newRemoteUrl, gitlabToken);
 			
 			return ResponseEntity.created(new URI(newRemoteUrl)).build();
 		} catch (Exception e) {
 			e.printStackTrace();
 			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage(), e);
+		} finally {
+			cleanup(projectName);
 		}
+	}
+
+	private void cleanup(String projectName) {
+		File checkoutDir = new File(projectName);
+		if(checkoutDir.exists()) {
+			try {
+				Files.walk(checkoutDir.toPath())
+				  .sorted(Comparator.reverseOrder())
+				  .map(Path::toFile)
+				  .forEach(File::delete);
+				checkoutDir.delete();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	private void setNewRemoteAndPush(Git repo, String newRemoteUrl, String gitlabToken) throws Exception {
+		log.info("Setting remote 'origin' to URL {}...", newRemoteUrl);
+		repo.remoteSetUrl()
+		.setRemoteName("origin")
+		.setRemoteUri(new URIish(newRemoteUrl))
+		.call();
+
+		log.info("Pushing contents...");
+		repo.push().setForce(true)
+		.setCredentialsProvider(new UsernamePasswordCredentialsProvider("gitlab-ci-token",gitlabToken))
+		.setProgressMonitor(new TextProgressMonitor())
+		.call();
+		log.info("Done!");
+	}
+	
+	private void addAndCommitFile(Git repo, String filename) throws Exception {
+		log.info("Adding file to git...");
+		repo.add().addFilepattern(filename).call();
+		log.info("Comitting...");
+		repo.commit().setMessage("Chore: Add generated gitlab CI file").call();
+
 	}
 
 	private File getCIFile(String projectName, File repoDir)
 			throws IOException, MalformedURLException, FileNotFoundException {
-		File gitlabciFile = new File(repoDir,"gitlab-ci.yaml");
+		log.info("Requesting CI file...");
+
+		File gitlabciFile = new File(repoDir,".gitlab-ci.yml");
 		ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(SMARTCLIDE_API_URL+CICD_FILE_SERVICE_PATH+projectName).openStream());
 		FileOutputStream fileOutputStream = new FileOutputStream(gitlabciFile);
 		try(fileOutputStream){
 			fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
 		}
+
+		log.info("CI file downloaded at {}.", gitlabciFile.getAbsolutePath());
 		return gitlabciFile;
 	}
 
 	private Future<Git> cloneServiceRepo(String originalRepoUrl)
 			throws GitAPIException, InvalidRemoteException, TransportException {
-		
+		log.info("Cloning project at {}...", originalRepoUrl);
 		return Executors.newSingleThreadExecutor().submit(Git.cloneRepository().setURI(originalRepoUrl));
 	}
 
 	private Mono<ResultObject> createRemoteRepo(String gitLabServerURL, String gitlabToken, String projectName) {
+		log.info("Requesting project structure creation for project {}...", projectName);
 		WebClient client = WebClient.create();
 		Mono<ResultObject> creationResult =  client.post()
 		.uri(SMARTCLIDE_API_URL+CREATE_STRUCTURE_SERVICE_PATH)
@@ -100,7 +153,8 @@ public class ProjectImportController {
 		.header("projDescription", "Imported project: "+ projectName)
 		.header("gitLabServerURL", gitLabServerURL)
 		.header("gitlabToken", gitlabToken)
-		.retrieve().bodyToMono(ResultObject.class);
+		.retrieve().bodyToMono(ResultObject.class)
+		.doOnSuccess(r -> log.info("Project structure created at {}", r.message));
 		return creationResult;
 	}
 
