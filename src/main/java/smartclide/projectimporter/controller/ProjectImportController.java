@@ -67,19 +67,33 @@ public class ProjectImportController {
 
 		try {
 			Mono<ResultObject> newRemoteRequest = createRemoteRepo(gitLabServerURL, gitlabToken, projectName, visibility);//non-blocking
-			Git repo = cloneServiceRepo(originalRepoUrl).get();//blocking
+			Git repo = cloneServiceRepo(originalRepoUrl, projectName).get();//blocking
 			log.info("Remote repository cloned at {}", repo.getRepository().getWorkTree().getAbsolutePath());
 			
-			String newRemoteUrl = newRemoteRequest.block().getMessage();//blocking
+			String newRemoteUrl = getNewRemoteUrl(newRemoteRequest);
+			
 			setNewRemoteAndPush(repo, newRemoteUrl, gitlabToken);
 			
 			return ResponseEntity.created(new URI(newRemoteUrl)).build();
 		} catch (Exception e) {
-			e.printStackTrace();
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage(), e);
+			log.error("Exception during project import process. ", e);
+			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
 		} finally {
 			cleanup(projectName);
 		}
+	}
+
+	private String getNewRemoteUrl(Mono<ResultObject> newRemoteRequest) {
+		ResultObject prjCreationResult = newRemoteRequest.block();//blocking
+		String newRemoteUrl = null;
+		if(prjCreationResult.status != 0) {
+			log.error("Exception while creating GitLab project structure: {}", prjCreationResult.message);
+			throw new RuntimeException(prjCreationResult.message);
+		} else {
+			newRemoteUrl = prjCreationResult.getMessage();	
+			log.info("Project structure created at {}", newRemoteUrl);
+		}
+		return newRemoteUrl;
 	}
 
 	private String getProjectName(String originalRepoUrl, String name) {
@@ -133,10 +147,10 @@ public class ProjectImportController {
 		log.info("Done!");
 	}
 	
-	private Future<Git> cloneServiceRepo(String originalRepoUrl)
+	private Future<Git> cloneServiceRepo(String originalRepoUrl, String projectName)
 			throws GitAPIException, InvalidRemoteException, TransportException {
 		log.info("Cloning project at {}...", originalRepoUrl);
-		return Executors.newSingleThreadExecutor().submit(Git.cloneRepository().setURI(originalRepoUrl));
+		return Executors.newSingleThreadExecutor().submit(Git.cloneRepository().setURI(originalRepoUrl).setDirectory(new File(projectName)));
 	}
 
 	private Mono<ResultObject> createRemoteRepo(String gitLabServerURL, String gitlabToken, String projectName, String visibility) {
@@ -155,8 +169,7 @@ public class ProjectImportController {
 		.header("projDescription", "Imported project: "+ projectName)
 		.header("gitLabServerURL", gitLabServerURL)
 		.header("gitlabToken", gitlabToken)
-		.retrieve().bodyToMono(ResultObject.class)
-		.doOnSuccess(r -> log.info("Project structure created at {}", r.message));
+		.retrieve().bodyToMono(ResultObject.class);
 		return creationResult;
 	}
 
