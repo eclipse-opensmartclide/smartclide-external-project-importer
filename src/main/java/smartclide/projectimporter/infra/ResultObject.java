@@ -1,4 +1,4 @@
-package smartclide.projectimporter.controller;
+package smartclide.projectimporter.infra;
 
 public class ResultObject {
 	int status;
