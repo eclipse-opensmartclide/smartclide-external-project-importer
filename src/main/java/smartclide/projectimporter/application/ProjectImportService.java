@@ -30,16 +30,15 @@ public class ProjectImportService {
 
 		try {
 			
-			Mono<ResultObject> newRemoteRequest = serviceCreation.createRemoteRepo(gitLabServerURL, gitlabToken, projectName, description, visibility);//non-blocking
+			Mono<ResultObject> newRemoteRequest = serviceCreation.createRemoteRepoAsync(gitLabServerURL, gitlabToken, projectName, description, visibility);//non-blocking
 			GitRepoHandler sourceRepoHandler = new GitRepoHandler(originalRepoUrl, workFolder, true);
 			sourceRepoHandler.cloneRepo();//blocking
-			log.info("Remote repository cloned at {}", sourceRepoHandler.getClonePath());
 			
-			GitRepoHandler destinationRepoHandler = new GitRepoHandler(getNewRemoteUrl(newRemoteRequest), workFolder, false);
+			GitRepoHandler destinationRepoHandler = new GitRepoHandler(getNewRemoteUrl(newRemoteRequest), workFolder, gitlabToken, false);
 			destinationRepoHandler.cloneRepo();
 			
 			copyContents(sourceRepoHandler.getClonePath(), destinationRepoHandler.getClonePath());
-			destinationRepoHandler.commitAndPush(gitlabToken);
+			destinationRepoHandler.commitAndPush();
 			
 			return new URI(destinationRepoHandler.getRepoURL());
 		} catch (Exception e) {

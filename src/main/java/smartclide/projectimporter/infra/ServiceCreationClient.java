@@ -15,7 +15,7 @@ public class ServiceCreationClient {
 	@Value("${projectCreationServiceUrl}")
 	String PROJECT_CREATION_SERVICE_URL;
 
-	public Mono<ResultObject> createRemoteRepo(String gitLabServerURL, String gitlabToken, String projectName, String description, String visibility) {
+	public Mono<ResultObject> createRemoteRepoAsync(String gitLabServerURL, String gitlabToken, String projectName, String description, String visibility) {
 		log.info("Requesting project structure creation for project {}...", projectName);
 		
 		WebClient client = WebClient.create();

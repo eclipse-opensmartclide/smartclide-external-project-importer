@@ -5,6 +5,7 @@ import java.util.concurrent.Executors;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.TextProgressMonitor;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.slf4j.Logger;
@@ -18,6 +19,7 @@ public class GitRepoHandler {
 	private String repoUrl;
 	private String workFolder;
 	private boolean isSource;
+	private CredentialsProvider credentialsProvider;
 	private Git repo;
 
 	public GitRepoHandler(String repoUrl, String workFolder, boolean isSource) {
@@ -26,15 +28,23 @@ public class GitRepoHandler {
 		this.isSource = isSource;
 	}
 	
+	public GitRepoHandler(String repoUrl, String workFolder, String gitlabToken, boolean isSource) {
+		this(repoUrl, workFolder, isSource);
+		this.credentialsProvider = new UsernamePasswordCredentialsProvider("gitlab-ci-token", gitlabToken);
+	}
+	
 	public void cloneRepo() throws Exception {
 		log.info("Cloning project from {}...", repoUrl);
 		String checkoutFolder = isSource ? "source" : "destination";
-		repo = Executors.newSingleThreadExecutor()
-				.submit(Git.cloneRepository().setURI(repoUrl).setDirectory(new File(workFolder, checkoutFolder)))
-				.get();
+		repo = Git.cloneRepository()
+				.setURI(repoUrl)
+				.setDirectory(new File(workFolder, checkoutFolder))
+				.setCredentialsProvider(credentialsProvider)
+				.call();
+		log.info("Remote repository cloned at {}", getClonePath());
 	}
 
-	public void commitAndPush(String gitlabToken) throws Exception {
+	public void commitAndPush() throws Exception {
 		if(this.isSource) throw new RuntimeException("Source repository cannot be modified");
 		
 		log.info("Adding contents to repo...");
@@ -45,7 +55,7 @@ public class GitRepoHandler {
 
 		log.info("Pushing contents...");
 		repo.push().setForce(true)
-				.setCredentialsProvider(new UsernamePasswordCredentialsProvider("gitlab-ci-token", gitlabToken))
+				.setCredentialsProvider(credentialsProvider)
 				.setProgressMonitor(new TextProgressMonitor()).call();
 		log.info("Done!");
 	}
