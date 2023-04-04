@@ -6,9 +6,11 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.UUID;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,19 +27,19 @@ public class ProjectImportService {
 	@Autowired
 	ServiceCreationClient serviceCreation;
 
-	public URI importProject(String originalRepoUrl,String projectName,String description,String visibility,String gitLabServerURL,String gitlabToken) {
+	public URI importProject(String originalRepoUrl,String projectName,String description,String visibility,String gitLabServerURL,String gitlabToken, String license) {
 		String workFolder = UUID.randomUUID().toString();
 
 		try {
 			
-			Mono<ResultObject> newRemoteRequest = serviceCreation.createRemoteRepoAsync(gitLabServerURL, gitlabToken, projectName, description, visibility);//non-blocking
+			Mono<ResultObject> newRemoteRequest = serviceCreation.createRemoteRepoAsync(gitLabServerURL, gitlabToken, projectName, description, visibility, license);//non-blocking
 			GitRepoHandler sourceRepoHandler = new GitRepoHandler(originalRepoUrl, workFolder, true);
 			sourceRepoHandler.cloneRepo();//blocking
 			
 			GitRepoHandler destinationRepoHandler = new GitRepoHandler(getNewRemoteUrl(newRemoteRequest), workFolder, gitlabToken, false);
 			destinationRepoHandler.cloneRepo();
 			
-			copyContents(sourceRepoHandler.getClonePath(), destinationRepoHandler.getClonePath());
+			copyContents(sourceRepoHandler.getClonePath(), destinationRepoHandler.getClonePath(), StringUtils.isNotBlank(license));
 			destinationRepoHandler.commitAndPush();
 			
 			return new URI(destinationRepoHandler.getRepoURL());
@@ -77,11 +79,15 @@ public class ProjectImportService {
 		}
 	}
 	
-	private void copyContents(String sources, String destination) throws IOException {
+	private void copyContents(String sources, String destination, boolean skipLicense) throws IOException {
 		Path sourceFolder = Paths.get(sources);
 	    Path destinationFolder = Paths.get(destination);
 	    
 		Files.walk(sourceFolder).forEach(sourcePath -> {
+			if(skipLicense && isLicenseFile(sourcePath, sourceFolder)){
+				log.info("Skipping license file {}", sourcePath);
+				return;
+			}
 			Path destPath = destinationFolder.resolve(sourceFolder.relativize(sourcePath));
 			File destFile = destPath.toFile();
 			if(!destFile.exists()) {
@@ -93,5 +99,9 @@ public class ProjectImportService {
 			}
 		});
 	}
-
+	
+	private boolean isLicenseFile(Path file, Path sourceFolder) {
+		return file.getParent().equals(sourceFolder) && file.getFileName().toString().matches("(?i)\\blicense\\b");
+	}
+	
 }
