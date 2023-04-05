@@ -34,7 +34,7 @@ public class ProjectImportController {
 	@CrossOrigin(origins = "*")
 	@PostMapping
 	@Operation(summary = "Clones the given repository, creates a Gitlab project with the given name or one inferred from the project being imported"
-			+ ", then pushes the original contents of main branch into a \"project_import\" branch in the newly created Gitlab repository")
+			+ ", then pushes the original contents of main branch into main branch of the newly created Gitlab repository")
 	@ApiResponses(value = {
 	        @ApiResponse(responseCode = "201", description = "Project created and pushed into Gitlab", headers = {
 	                @Header(name="Location", description = "The URL where the new project can be found")}),
@@ -44,11 +44,12 @@ public class ProjectImportController {
 			@Nullable @RequestParam("name") String name,
 			@Nullable @RequestParam("description") String description,
 			@Nullable @RequestParam("visibility") String visibility,
+			@Nullable @RequestParam("license") String license,
 			@RequestHeader String gitLabServerURL,
 			@RequestHeader String gitlabToken) {
 		
 		try {
-			URI createdRepoUri = importService.importProject(originalRepoUrl, name, description, visibility, gitLabServerURL, gitlabToken);
+			URI createdRepoUri = importService.importProject(originalRepoUrl, name, description, visibility, gitLabServerURL, gitlabToken, license);
 			return ResponseEntity.created(createdRepoUri).build();
 		} catch (Exception e) {
 			log.error("Exception during project import process. ", e);
